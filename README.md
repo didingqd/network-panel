@@ -24,7 +24,13 @@
 ---
 ## 文档目录
 
-- 部署指南：[
+- 服务端部署（面板）：[
+  docs/SERVER_DEPLOY.md
+](docs/SERVER_DEPLOY.md) — 二进制一键脚本与 Docker Compose 两种方式
+- 节点部署（Agent/节点）：[
+  docs/NODE_DEPLOY.md
+](docs/NODE_DEPLOY.md)
+- 部署总览（可选）：[
   docs/DEPLOYMENT.md
 ](docs/DEPLOYMENT.md)
 - API 文档：[
