@@ -32,7 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/NiuStar/flux-panel/refs/heads/main/
 - systemd 服务名：`flux-panel`
 - 可执行文件：`/usr/local/bin/flux-panel-server`
 - 工作目录：`/opt/flux-panel`
-- 环境配置：`/etc/default/flux-panel`
+- 请把前端静态资源放置于 `/opt/flux-panel/public/`(二进制安装必须自行npm 构建前端)
+- 环境配置：`/etc/default/flux-panel/.env`
 
 环境变量说明：
 ```
