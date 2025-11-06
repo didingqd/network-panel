@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/NiuStar/network-panel/refs/heads/ma
 
 安装过程包含：
 - 交互选择安装方式：二进制（默认 SQLite）或 Docker Compose（MySQL）
-- 二进制：安装 systemd 服务，环境配置位于 `/etc/default/network-panel`
+- 二进制：安装 systemd 服务，环境配置位于 `/etc/default/network-panel`，并自动从 Release 下载前端静态资源包到 `/opt/network-panel/public`
 - Docker Compose：在 `network-panel/` 下下载并启动 `docker-compose.yaml`
 
 配置与环境变量：

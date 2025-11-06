@@ -20,6 +20,7 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 PROXY_PREFIX=""
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MAIN_PKG="${ROOT_DIR}/golang-backend/cmd/server"
+FRONTEND_ASSET_NAME="frontend-dist.zip"
 
 detect_arch() {
   local m
@@ -81,6 +82,18 @@ download_prebuilt() {
   return 1
 }
 
+download_frontend_dist() {
+  local base="https://github.com/NiuStar/network-panel/releases/latest/download"
+  if [[ -n "$PROXY_PREFIX" ]]; then base="${PROXY_PREFIX}${base}"; fi
+  local url="${base}/${FRONTEND_ASSET_NAME}"
+  log "Trying to download frontend assets: $url"
+  if curl -fSL --retry 3 --retry-delay 1 "$url" -o /tmp/frontend-dist.zip; then
+    printf '/tmp/frontend-dist.zip\n'
+    return 0
+  fi
+  return 1
+}
+
 extract_or_install() {
   local file="$1"
   mkdir -p "$INSTALL_DIR"
@@ -113,11 +126,22 @@ extract_or_install() {
     return 1
   fi
 
-  # Check for frontend assets when using archive; warn if missing for plain binary
-  if [[ ! -d "$INSTALL_DIR/public" ]]; then
-    log "⚠️  Frontend assets not found at $INSTALL_DIR/public"
-    log "   - If you downloaded a single binary, the web UI won't be available."
-    log "   - Recommended: use the Docker image or a release tarball that contains 'public/'."
+  # Ensure frontend assets exist; if missing, try to fetch the dist zip from GitHub release
+  if [[ ! -d "$INSTALL_DIR/public" || -z "$(find "$INSTALL_DIR/public" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+    log "Frontend assets missing, attempting to download ${FRONTEND_ASSET_NAME}..."
+    local fzip
+    if fzip=$(download_frontend_dist); then
+      if command -v unzip >/dev/null 2>&1; then
+        mkdir -p "$INSTALL_DIR/public"
+        unzip -qo "$fzip" -d "$INSTALL_DIR/public"
+        log "✅ Frontend assets installed to $INSTALL_DIR/public"
+      else
+        log "⚠️  'unzip' not found; cannot extract ${FRONTEND_ASSET_NAME}. Please install unzip and re-run."
+      fi
+    else
+      log "⚠️  Failed to download ${FRONTEND_ASSET_NAME}. The web UI may be unavailable."
+      log "   - You can build locally (vite-frontend) and copy dist/* to $INSTALL_DIR/public"
+    fi
   fi
 }
 
@@ -179,7 +203,12 @@ write_env_file() {
 # Flux Panel server environment
 # Bind port for HTTP API
 PORT=6365
-# Database settings (MySQL)
+# Database settings
+# Default to SQLite for simpler out-of-the-box usage. To switch to MySQL,
+# clear DB_DIALECT and set DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD.
+DB_DIALECT=sqlite
+DB_SQLITE_PATH=/opt/network-panel/flux.db
+# MySQL settings (used only if DB_DIALECT is empty)
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=flux_panel
@@ -187,7 +216,7 @@ DB_USER=flux
 DB_PASSWORD=123456
 # Expected agent version for auto-upgrade.
 # Agents connecting with a different version will receive an Upgrade command.
-# Example: AGENT_VERSION=go-agent-1.0.7
+# Example: AGENT_VERSION=go-agent-1.0.0
 # Leave empty to use server default.
 AGENT_VERSION=
 EOF

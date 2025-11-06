@@ -9,6 +9,10 @@ AGENT_BUILD="$ROOT_DIR/scripts/build_flux_agent_all.sh"
 SERVER_BUILD="$ROOT_DIR/scripts/build_server_all.sh"
 ASSETS_DIR_AGENT="$ROOT_DIR/golang-backend/public/flux-agent"
 ASSETS_DIR_SERVER="$ROOT_DIR/golang-backend/public/server"
+# Frontend
+FRONTEND_DIR="$ROOT_DIR/vite-frontend"
+ASSETS_DIR_FRONTEND="$ROOT_DIR/golang-backend/public/frontend"
+FRONTEND_ZIP="$ASSETS_DIR_FRONTEND/frontend-dist.zip"
 
 usage() {
   cat <<EOF
@@ -21,6 +25,7 @@ Options:
   --no-release   Do not create a GitHub Release even if gh is available.
 
 Behavior:
+  - Runs frontend (vite) build and zips dist to frontend-dist.zip.
   - Runs agent and server build scripts.
   - Creates an annotated tag and pushes it to origin.
   - If gh CLI is installed and not disabled, creates a GitHub release and uploads artifacts.
@@ -65,6 +70,27 @@ if [[ "$FORCE" -eq 0 ]]; then
 fi
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
+  echo "==> Building frontend (vite-frontend)"
+  (
+    set -e
+    cd "$FRONTEND_DIR"
+    # Follow requested flow: npm install && npm run build
+    npm install --legacy-peer-deps --no-audit --no-fund
+    npm run build
+  )
+  echo "==> Packaging frontend dist -> $FRONTEND_ZIP"
+  mkdir -p "$ASSETS_DIR_FRONTEND"
+  rm -f "$FRONTEND_ZIP"
+  if command -v zip >/dev/null 2>&1; then
+    (
+      cd "$FRONTEND_DIR/dist"
+      # Zip the contents (not the dist folder itself)
+      zip -qr "$FRONTEND_ZIP" .
+    )
+  else
+    echo "zip command not found; please install zip or package dist manually." >&2
+    exit 1
+  fi
   echo "==> Building flux-agent for all targets"
   bash "$AGENT_BUILD"
   echo "==> Building server for all targets"
@@ -90,6 +116,9 @@ if [[ -d "$ASSETS_DIR_AGENT" ]]; then
 fi
 if [[ -d "$ASSETS_DIR_SERVER" ]]; then
   while IFS= read -r -d '' f; do assets+=("$f"); done < <(find "$ASSETS_DIR_SERVER" -type f -print0)
+fi
+if [[ -d "$ASSETS_DIR_FRONTEND" ]]; then
+  while IFS= read -r -d '' f; do assets+=("$f"); done < <(find "$ASSETS_DIR_FRONTEND" -type f -print0)
 fi
 
 # Determine owner/repo from origin for both gh and REST paths

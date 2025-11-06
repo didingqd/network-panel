@@ -107,7 +107,7 @@ func SystemInfoWS(c *gin.Context) {
 		// auto-upgrade agent if version mismatch
 		expected := os.Getenv("AGENT_VERSION")
 		if expected == "" {
-			expected = "go-agent-1.0.7"
+			expected = "go-agent-1.0.0"
 		}
 		if version != "" && expected != "" && version != expected {
 			jlog(map[string]interface{}{"event": "agent_upgrade_trigger", "nodeId": node.ID, "from": version, "to": expected})

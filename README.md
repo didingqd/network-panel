@@ -70,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/NiuStar/network-panel/refs/heads/ma
 ---
 ## Agent 自升级
 
-- 行为：Agent 建立 WS 连接 `/system-info` 时会携带自身版本（如 `go-agent-1.0.7`）。后端读取环境变量 `AGENT_VERSION`（为空则用内置默认）作为期望版本；若不一致则通过 WS 下发 `UpgradeAgent` 指令。
+- 行为：Agent 建立 WS 连接 `/system-info` 时会携带自身版本（如 `go-agent-1.0.0`）。后端读取环境变量 `AGENT_VERSION`（为空则用内置默认）作为期望版本；若不一致则通过 WS 下发 `UpgradeAgent` 指令。
 - 升级流程：Agent 根据自身 CPU 架构从后端下载对应二进制 `/flux-agent/flux-agent-linux-<arch>`（容器内置 amd64/arm64/armv7），替换本地 `/etc/gost/flux-agent` 并 `systemctl restart flux-agent`。
 - 配置：
   - Docker：在运行容器时设置环境变量 `AGENT_VERSION` 即可控制目标版本。

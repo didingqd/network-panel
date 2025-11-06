@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/NiuStar/network-panel/refs/heads/ma
 - systemd 服务名：`network-panel`
 - 可执行文件：`/usr/local/bin/network-panel-server`
 - 工作目录：`/opt/network-panel`
-- 请把前端静态资源放置于 `/opt/network-panel/public/`(二进制安装必须自行npm 构建前端)
+- 前端静态资源：安装脚本会自动从 GitHub Release 下载 `frontend-dist.zip` 并解压至 `/opt/network-panel/public/`；离线环境可在本地 `vite-frontend` 目录执行 `npm install && npm run build`，将 `dist/*` 手动复制到该目录
 - 环境配置：`/etc/default/network-panel`
 
 环境变量说明：
@@ -62,7 +62,7 @@ DB_PORT=3306
 DB_NAME=flux_panel
 DB_USER=flux
 DB_PASSWORD=123456
-AGENT_VERSION=go-agent-1.0.7  # (可选) 期望的 Agent 版本，用于触发自升级
+AGENT_VERSION=go-agent-1.0.0  # (可选) 期望的 Agent 版本，用于触发自升级
 ```
 
 4）常用命令：
@@ -106,7 +106,7 @@ docker compose -f docker-compose-v4.yml up -d
 
 如需控制 Agent 自升级目标版本，在 docker-compose 配置或容器运行参数中加入：
 ```
--e AGENT_VERSION=go-agent-1.0.7
+-e AGENT_VERSION=go-agent-1.0.0
 ```
 
 ---

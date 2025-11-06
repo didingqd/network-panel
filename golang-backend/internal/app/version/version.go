@@ -1,5 +1,5 @@
 package version
 
-var serverVersion = "server-1.0.7"
+var serverVersion = "server-1.0.0"
 
 func Get() string { return serverVersion }
