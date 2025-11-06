@@ -63,7 +63,7 @@ sudo journalctl -u flux-panel -f
 ---
 ## 方式二：Docker Compose 部署
 
-仓库内提供 `docker-compose-v4.yml`，可与 `panel_install.sh` 搭配使用或手动部署。
+仓库内提供 `docker-compose-v4.yml`手动部署。
 
 1）准备环境与变量
 - 确保 Docker 与 Docker Compose 可用
