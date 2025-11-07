@@ -8,8 +8,8 @@ import (
 	"network-panel/golang-backend/internal/app/model"
 	"network-panel/golang-backend/internal/app/util"
 
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
+    "gorm.io/driver/mysql"
+    sqlite "github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )

@@ -21,6 +21,7 @@ PROXY_PREFIX=""
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MAIN_PKG="${ROOT_DIR}/golang-backend/cmd/server"
 FRONTEND_ASSET_NAME="frontend-dist.zip"
+DOT_ENV_FILE="/opt/network-panel/.env"
 
 detect_arch() {
   local m
@@ -207,13 +208,15 @@ PORT=6365
 # Default to SQLite for simpler out-of-the-box usage. To switch to MySQL,
 # clear DB_DIALECT and set DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD.
 DB_DIALECT=sqlite
-DB_SQLITE_PATH=/opt/network-panel/flux.db
+DB_SQLITE_PATH=/opt/network-panel/panel.db
 # MySQL settings (used only if DB_DIALECT is empty)
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=flux_panel
 DB_USER=flux
 DB_PASSWORD=123456
+# JWT secret for API authentication
+JWT_SECRET=flux-panel-secret
 # Expected agent version for auto-upgrade.
 # Agents connecting with a different version will receive an Upgrade command.
 # Example: AGENT_VERSION=go-agent-1.0.0
@@ -232,6 +235,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-${ENV_FILE}
+EnvironmentFile=-${DOT_ENV_FILE}
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=${BIN_PATH}
 Restart=always
@@ -264,6 +268,21 @@ main() {
   fi
 
   write_env_file
+  # Also create a project-local .env with sane defaults
+  if [[ ! -f "$DOT_ENV_FILE" ]]; then
+    cat > "$DOT_ENV_FILE" <<EOF
+PORT=6365
+DB_DIALECT=sqlite
+DB_SQLITE_PATH=/opt/network-panel/panel.db
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=flux_panel
+DB_USER=flux
+DB_PASSWORD=123456
+JWT_SECRET=flux-panel-secret
+AGENT_VERSION=
+EOF
+  fi
   write_service
   systemctl restart "$SERVICE_NAME"
   systemctl status --no-pager "$SERVICE_NAME" || true

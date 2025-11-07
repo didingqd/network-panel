@@ -60,9 +60,9 @@ edit_env_sqlite() {
   # 将服务配置改为 SQLite 模式
   local envf="/etc/default/network-panel"
   if [[ $EUID -ne 0 ]]; then sudo sh -c "echo DB_DIALECT=sqlite >> '$envf'"; else echo DB_DIALECT=sqlite >> "$envf"; fi
-  if confirm "是否自定义 SQLite 路径(默认 /opt/network-panel/flux.db)?"; then
+  if confirm "是否自定义 SQLite 路径(默认 /opt/network-panel/panel.db)?"; then
     read -rp "输入 DB_SQLITE_PATH: " p
-    p=${p:-/opt/network-panel/flux.db}
+    p=${p:-/opt/network-panel/panel.db}
     if [[ $EUID -ne 0 ]]; then sudo sh -c "echo DB_SQLITE_PATH='$p' >> '$envf'"; else echo "DB_SQLITE_PATH=$p" >> "$envf"; fi
   fi
   echo "已设置为 SQLite 模式，执行: sudo systemctl restart network-panel"
@@ -163,4 +163,3 @@ main() {
 }
 
 main "$@"
-
