@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+    "gorm.io/gorm/clause"
 )
 
 // POST /api/v1/migrate {host, port, user, password, db}
@@ -97,25 +98,28 @@ func copyAll(src *gorm.DB, dst *gorm.DB) ([]tableStat, error) {
 }
 
 func copyTable[T any](src *gorm.DB, dst *gorm.DB, table string) (tableStat, error) {
-	st := tableStat{Table: table}
-	if err := src.Model(new(T)).Count(&st.SrcCount).Error; err != nil {
-		return st, err
-	}
-	if st.SrcCount == 0 {
-		return st, nil
-	}
-	var list []T
-	if err := src.Find(&list).Error; err != nil {
-		return st, err
-	}
-	if len(list) == 0 {
-		return st, nil
-	}
-	if err := dst.Create(&list).Error; err != nil {
-		return st, err
-	}
-	st.Inserted = int64(len(list))
-	return st, nil
+    st := tableStat{Table: table}
+    if err := src.Model(new(T)).Count(&st.SrcCount).Error; err != nil {
+        return st, err
+    }
+    if st.SrcCount == 0 {
+        return st, nil
+    }
+    var list []T
+    if err := src.Find(&list).Error; err != nil {
+        return st, err
+    }
+    if len(list) == 0 {
+        return st, nil
+    }
+    // Use upsert semantics to avoid duplicate primary key errors when destination已有数据
+    // For MySQL: INSERT ... ON DUPLICATE KEY UPDATE ...
+    // For SQLite: INSERT ... ON CONFLICT(id) DO UPDATE SET ...
+    if err := dst.Clauses(clause.OnConflict{UpdateAll: true}).Create(&list).Error; err != nil {
+        return st, err
+    }
+    st.Inserted = int64(len(list))
+    return st, nil
 }
 
 // POST /api/v1/migrate/test {host, port, user, password, db}
