@@ -146,6 +146,27 @@ extract_or_install() {
   fi
 }
 
+# Ensure install.sh is available for node bootstrap (served at GET /install.sh)
+install_install_sh() {
+  local dst="$INSTALL_DIR/install.sh"
+  # Prefer repo copy if available (running from source tree)
+  if [[ -f "$ROOT_DIR/install.sh" ]]; then
+    install -m 0755 "$ROOT_DIR/install.sh" "$dst"
+    log "✅ install.sh installed to $dst"
+    return 0
+  fi
+  # Otherwise download from GitHub main branch
+  local base="https://raw.githubusercontent.com/NiuStar/network-panel/refs/heads/main/install.sh"
+  if [[ -n "$PROXY_PREFIX" ]]; then base="${PROXY_PREFIX}${base}"; fi
+  if curl -fSL --retry 3 --retry-delay 1 "$base" -o "$dst"; then
+    chmod +x "$dst"
+    log "✅ install.sh downloaded to $dst"
+    return 0
+  fi
+  log "⚠️  Failed to obtain install.sh; /install.sh endpoint will return 404 until provided."
+  return 1
+}
+
 build_from_source() {
   if ! command -v go >/dev/null 2>&1; then
     log "Go toolchain not installed; cannot build from source."
@@ -195,6 +216,8 @@ build_from_source() {
       log "   - Use Docker image or prebuilt release tarball for a ready UI."
     fi
   fi
+  # Always install install.sh alongside WorkingDirectory for /install.sh serving
+  install_install_sh || true
 }
 
 write_env_file() {
@@ -217,11 +240,6 @@ DB_USER=flux
 DB_PASSWORD=123456
 # JWT secret for API authentication
 JWT_SECRET=flux-panel-secret
-# Expected agent version for auto-upgrade.
-# Agents connecting with a different version will receive an Upgrade command.
-# Example: AGENT_VERSION=go-agent-1.0.0
-# Leave empty to use server default.
-AGENT_VERSION=
 EOF
 }
 
@@ -267,6 +285,9 @@ main() {
      build_from_source || { log "Build failed"; exit 1; }
   fi
 
+  # Ensure install.sh present for node bootstrap
+  install_install_sh || true
+
   write_env_file
   # Also create a project-local .env with sane defaults
   if [[ ! -f "$DOT_ENV_FILE" ]]; then
@@ -280,7 +301,6 @@ DB_NAME=flux_panel
 DB_USER=flux
 DB_PASSWORD=123456
 JWT_SECRET=flux-panel-secret
-AGENT_VERSION=
 EOF
   fi
   write_service

@@ -1,30 +1,29 @@
 package controller
 
 import (
-	"net/http"
-	"os"
+    "net/http"
+    "strings"
 
-	"github.com/gin-gonic/gin"
-	"network-panel/golang-backend/internal/app/response"
-	appver "network-panel/golang-backend/internal/app/version"
+    "github.com/gin-gonic/gin"
+    "network-panel/golang-backend/internal/app/response"
+    appver "network-panel/golang-backend/internal/app/version"
 )
 
 // GET /api/v1/version
 func Version(c *gin.Context) {
-	// server.version from main package
-	serverVer := appver.Get()
-	// agent version (expected agent binary baseline)
-    agentVer := os.Getenv("AGENT_VERSION")
-    if agentVer == "" {
-        agentVer = "go-agent-1.0.1"
+    // Backend version
+    serverVer := appver.Get() // e.g. "1.0.1"
+    base := serverVer
+    // tolerate legacy values like "server-1.0.1"
+    if strings.HasPrefix(base, "server-") {
+        base = strings.TrimPrefix(base, "server-")
     }
-    agent2Ver := os.Getenv("AGENT2_VERSION")
-    if agent2Ver == "" {
-        agent2Ver = "go-agent2-1.0.1"
-    }
-	c.JSON(http.StatusOK, response.Ok(map[string]string{
-		"server": serverVer,
-		"agent":  agentVer,
-		"agent2": agent2Ver,
-	}))
+    // Expected agent versions strictly follow backend version
+    agentVer := "go-agent-" + base
+    agent2Ver := "go-agent2-" + base
+    c.JSON(http.StatusOK, response.Ok(map[string]string{
+        "server": serverVer,
+        "agent":  agentVer,
+        "agent2": agent2Ver,
+    }))
 }

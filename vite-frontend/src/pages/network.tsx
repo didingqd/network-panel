@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
-import { getNodeNetworkStats, getNodeNetworkStatsBatch, getNodeList } from "@/api";
+import { getNodeNetworkStats, getNodeNetworkStatsBatch, getNodeList, getNodeSysinfo } from "@/api";
 import { useRef } from "react";
 import toast from "react-hot-toast";
 
@@ -22,6 +22,8 @@ export default function NetworkPage() {
   const [data, setData] = useState<any>({ results: [], targets: {}, disconnects: [], sla: 0 });
   const [nodes, setNodes] = useState<any[]>([]);
   const [batch, setBatch] = useState<any>({});
+  const [sysMap, setSysMap] = useState<Record<number, any>>({});
+  const [cycleOverride, setCycleOverride] = useState<Record<number, number>>({});
   const [nodeName, setNodeName] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -36,7 +38,18 @@ export default function NetworkPage() {
         else toast.error(res.msg || '加载失败');
       } else {
         const [l, b] = await Promise.all([getNodeList(), getNodeNetworkStatsBatch(range)]);
-        if (l.code === 0) setNodes(l.data || []);
+        if (l.code === 0) {
+          const arr = (l.data || []) as any[];
+          setNodes(arr);
+          // fetch latest sysinfo per node (limit 1)
+          const entries = await Promise.all(arr.map(async (n:any)=>{
+            try { const r:any = await getNodeSysinfo(n.id, '1h', 1); if (r.code===0 && Array.isArray(r.data) && r.data.length>0) return [n.id, r.data[r.data.length-1]]; } catch {}
+            return [n.id, null];
+          }));
+          const m: Record<number, any> = {};
+          entries.forEach(([id, s]: any)=>{ if (s) m[id]=s; });
+          setSysMap(m);
+        }
         if (b.code === 0) setBatch(b.data || {});
       }
     } catch { toast.error('网络错误'); } finally { setLoading(false); }
@@ -152,16 +165,76 @@ export default function NetworkPage() {
           <Button size="sm" variant="flat" onPress={load} isLoading={loading}>刷新</Button>
         </CardHeader>
         <CardBody>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {nodes.map((n:any)=>{
               const s = batch?.[n.id] || {};
               const avg = s.avg ?? null; const latest = s.latest ?? null;
+              const sys = sysMap[n.id];
+              const online = (n.status === 1);
+              const formatUptime = (seconds:number) => {
+                if (!seconds) return '-'; const d=Math.floor(seconds/86400); const h=Math.floor((seconds%86400)/3600); const m=Math.floor((seconds%3600)/60);
+                return d>0? `${d}天${h}小时` : (h>0? `${h}小时${m}分钟` : `${m}分钟`);
+              };
+              const fmtTraffic = (bytes:number) => {
+                if (!bytes) return '0 B'; const k=1024; const u=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(bytes)/Math.log(k)); return `${(bytes/Math.pow(k,i)).toFixed(2)} ${u[i]}`;
+              };
+              const remainDays = () => {
+                const cd = cycleOverride[n.id] || n.cycleDays;
+                if (!cd || !n.startDateMs) return '';
+                const now = Date.now(); const cycleMs = cd*24*3600*1000; const elapsed=Math.max(0, now - n.startDateMs); const remain=cycleMs - (elapsed % cycleMs);
+                const days = Math.ceil(remain/(24*3600*1000)); return `${days} 天`;
+              };
               return (
-                <div key={n.id} className="p-3 rounded border border-default-200">
-                  <div className="font-semibold mb-1">{n.name}</div>
-                  <div className="text-sm text-default-500">最新: {latest!=null? `${latest} ms` : '-'}</div>
-                  <div className="text-sm text-default-500">平均: {avg!=null? `${avg} ms` : '-'}</div>
-                  <div className="mt-2"><Button size="sm" variant="flat" onPress={()=>navigate(`/network/${n.id}`)}>查看详情</Button></div>
+                <div key={n.id} className="p-3 rounded border border-divider hover:shadow-sm transition cursor-pointer" onClick={()=>navigate(`/network/${n.id}`)}>
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="font-semibold truncate">{n.name}</div>
+                    <span className={`text-2xs px-2 py-0.5 rounded ${online? 'bg-success-100 text-success-700':'bg-danger-100 text-danger-700'}`}>{online? '在线':'离线'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-default-600 mb-0.5">CPU</div>
+                      <div className="font-mono">{online && sys? `${(sys.cpu).toFixed?.(1) || sys.cpu}%` : '-'}</div>
+                    </div>
+                    <div>
+                      <div className="text-default-600 mb-0.5">内存</div>
+                      <div className="font-mono">{online && sys? `${(sys.mem).toFixed?.(1) || sys.mem}%` : '-'}</div>
+                    </div>
+                    <div>
+                      <div className="text-default-600 mb-0.5">开机时间</div>
+                      <div className="font-mono">{online && sys? formatUptime(sys.uptime) : '-'}</div>
+                    </div>
+                    <div>
+                      <div className="text-default-600 mb-0.5">网络</div>
+                      <div className="font-mono">{latest!=null? `${latest} ms` : '-'}{avg!=null? ` · 平均 ${avg} ms`: ''}</div>
+                    </div>
+                    <div>
+                      <div className="text-default-600 mb-0.5">↑ 上行流量</div>
+                      <div className="font-mono">{online && sys? fmtTraffic(sys.bytes_tx||0): '-'}</div>
+                    </div>
+                    <div>
+                      <div className="text-default-600 mb-0.5">↓ 下行流量</div>
+                      <div className="font-mono">{online && sys? fmtTraffic(sys.bytes_rx||0): '-'}</div>
+                    </div>
+                  </div>
+                  {(n.priceCents || n.cycleDays) && (
+                    <div className="mt-2 text-xs text-default-600">
+                      计费：{n.priceCents? `¥${(n.priceCents/100).toFixed(2)}`: ''}{(cycleOverride[n.id]||n.cycleDays)? ` / ${(cycleOverride[n.id]||n.cycleDays)}天`: ''}{n.startDateMs? ` · 剩余${remainDays()}`: ''}
+                      <div className="mt-1 flex items-center gap-2">
+                        <span>续费周期</span>
+                        <select className="text-xs border rounded px-1 py-0.5"
+                          value={String(cycleOverride[n.id] || n.cycleDays || '')}
+                          onClick={(e)=>e.stopPropagation()}
+                          onChange={(e)=>{ const v = Number(e.target.value); setCycleOverride(prev=>({...prev, [n.id]: v||undefined as any})); }}
+                        >
+                          <option value="">默认</option>
+                          <option value="30">月(30天)</option>
+                          <option value="90">季度(90天)</option>
+                          <option value="180">半年(180天)</option>
+                          <option value="365">年(365天)</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}

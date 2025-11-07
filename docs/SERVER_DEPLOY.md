@@ -63,7 +63,6 @@ DB_PORT=3306
 DB_NAME=flux_panel
 DB_USER=flux
 DB_PASSWORD=123456
-AGENT_VERSION=go-agent-1.0.0  # (可选) 期望的 Agent 版本，用于触发自升级
 ```
 
 4）常用命令：
@@ -76,7 +75,7 @@ sudo journalctl -u network-panel -f
 > 首次启动会自动创建数据库（如权限允许）与管理员账号（admin_user/admin_user），请尽快登录修改密码。
 
 自升级说明：
-- 后端通过环境变量 `AGENT_VERSION` 指定期望的 Agent 版本；若为空则使用后端内置默认值。
+- 期望的 Agent 版本与后端版本严格一致（后端升级到 1.0.1，则 Agent 期望版本为 1.0.1），不再支持通过环境变量自定义。
 - Agent 连接后端 WS 时会携带自身版本；若与期望版本不一致，后端会下发 `UpgradeAgent` 指令。
 - Agent 将从后端下载 `/flux-agent/flux-agent-linux-<arch>` 二进制（镜像/发布包已内置常见架构），替换本地 `/etc/gost/flux-agent` 并尝试重启自身（systemd/service/或进程内 Exec 替换）。
 
@@ -105,10 +104,7 @@ docker compose -f docker-compose-v4.yml pull
 docker compose -f docker-compose-v4.yml up -d
 ```
 
-如需控制 Agent 自升级目标版本，在 docker-compose 配置或容器运行参数中加入：
-```
--e AGENT_VERSION=go-agent-1.0.0
-```
+（提示：旧版中通过 `AGENT_VERSION` 控制目标版本的方式已废弃。）
 
 ---
 ## 端口与安全

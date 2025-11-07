@@ -11,10 +11,9 @@ import (
 	"fmt"
 	"network-panel/golang-backend/internal/app/model"
 	apputil "network-panel/golang-backend/internal/app/util"
+	appver "network-panel/golang-backend/internal/app/version"
 	dbpkg "network-panel/golang-backend/internal/db"
-	"strings"
-
-	"os"
+    "strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -49,7 +48,8 @@ var (
 func SystemInfoWS(c *gin.Context) {
 	secret := c.Query("secret")
 	nodeType := c.Query("type")
-	version := c.Query("version")
+    version := c.Query("version")
+    role := c.Query("role") // agent1 or agent2 (optional)
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -104,15 +104,15 @@ func SystemInfoWS(c *gin.Context) {
 		// broadcast online status
 		broadcastToAdmins(map[string]interface{}{"id": node.ID, "type": "status", "data": 1})
 
-		// auto-upgrade agent if version mismatch
-		expected := os.Getenv("AGENT_VERSION")
-		if expected == "" {
-			expected = "go-agent-1.0.0"
-		}
-		if version != "" && expected != "" && version != expected {
-			jlog(map[string]interface{}{"event": "agent_upgrade_trigger", "nodeId": node.ID, "from": version, "to": expected})
-			_ = sendWSCommand(node.ID, "UpgradeAgent", map[string]any{"to": expected})
-		}
+        // auto-upgrade agent if version mismatch (expected strictly follows backend version)
+        sv := appver.Get()
+        if strings.HasPrefix(sv, "server-") { sv = strings.TrimPrefix(sv, "server-") }
+        expected := "go-agent-" + sv
+        if role == "agent2" { expected = "go-agent2-" + sv }
+        if version != "" && expected != "" && version != expected {
+            jlog(map[string]interface{}{"event": "agent_upgrade_trigger", "nodeId": node.ID, "from": version, "to": expected, "role": role})
+            _ = sendWSCommand(node.ID, "UpgradeAgent", map[string]any{"to": expected})
+        }
 
 		// read messages and forward system info
 		for {

@@ -145,6 +145,13 @@ func RegisterRoutes(r *gin.Engine) {
 	// version
 	api.GET("/version", controller.Version)
 
+	// public share (read-only views)
+	share := api.Group("/share")
+	{
+		share.POST("/network-list", controller.ShareNetworkList)
+		share.POST("/network-stats", controller.ShareNetworkStats)
+	}
+
 	// migrate (admin only)
 	api.POST("/migrate", middleware.RequireRole(), controller.MigrateFrom)
 	api.POST("/migrate/test", middleware.RequireRole(), controller.MigrateTest)

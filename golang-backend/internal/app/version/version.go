@@ -1,5 +1,7 @@
 package version
 
-var serverVersion = "server-1.0.0"
+// serverVersion follows SemVer string for the backend.
+// Agent expected version is derived from this (see controller/version.go).
+var serverVersion = "1.0.1"
 
 func Get() string { return serverVersion }

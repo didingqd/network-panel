@@ -7,6 +7,7 @@ import DashboardPage from "@/pages/dashboard";
 import ForwardPage from "@/pages/forward";
 import ProbePage from "@/pages/probe";
 import NetworkPage from "@/pages/network";
+import ShareNetworkPage from "@/pages/share/network";
 import MigratePage from "@/pages/migrate";
 import TunnelPage from "@/pages/tunnel";
 import NodePage from "@/pages/node";
@@ -152,6 +153,9 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<LoginRoute />} />
+      {/* Public share (read-only) */}
+      <Route path="/share/network" element={<ShareNetworkPage />} />
+      <Route path="/share/network/:id" element={<ShareNetworkPage />} />
       <Route 
         path="/change-password" 
         element={

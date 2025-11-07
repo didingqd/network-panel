@@ -127,12 +127,9 @@ curl -fsSL https://raw.githubusercontent.com/NiuStar/network-panel/refs/heads/ma
 ---
 ## Agent 自升级
 
-- 行为：Agent 建立 WS 连接 `/system-info` 时会携带自身版本（如 `go-agent-1.0.0`）。后端读取环境变量 `AGENT_VERSION`（为空则用内置默认）作为期望版本；若不一致则通过 WS 下发 `UpgradeAgent` 指令。
-- 升级流程：Agent 根据自身 CPU 架构从后端下载对应二进制 `/flux-agent/flux-agent-linux-<arch>`（容器内置 amd64/arm64/armv7），替换本地 `/etc/gost/flux-agent` 并 `systemctl restart flux-agent`。
-- 配置：
-  - Docker：在运行容器时设置环境变量 `AGENT_VERSION` 即可控制目标版本。
-  - Systemd：使用一键脚本或 `scripts/install_server.sh` 安装时，`/etc/default/network-panel` 中可设置 `AGENT_VERSION` 项。
-  - 产物：Docker 镜像内置 `flux-agent-linux-amd64/arm64/armv7`，发布脚本 `scripts/build_flux_agent_all.sh` 会生成更多平台二进制以供手动替换到 `golang-backend/public/flux-agent/`。
+- 行为：Agent 建立 WS 连接 `/system-info` 时会携带自身版本（如 `go-agent-1.0.1`）。后端的期望 Agent 版本与后端版本完全一致（不再支持自定义环境变量覆盖）。若不一致会下发 `UpgradeAgent` 指令触发在线升级。
+- 升级流程：Agent 根据自身 CPU 架构从后端下载对应二进制 `/flux-agent/flux-agent-linux-<arch>`（镜像/发布包内置 amd64/arm64/armv7），替换本地 `/etc/gost/flux-agent` 并 `systemctl restart flux-agent`。
+- 产物：Docker 镜像内置 `flux-agent-linux-amd64/arm64/armv7`；如需更多平台，可使用 `scripts/build_flux_agent_all.sh` 生成并放入 `golang-backend/public/flux-agent/`。
 
 ---
 ## 隧道转发配置（JSON 参考）

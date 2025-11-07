@@ -117,3 +117,9 @@ export const getNodeNetworkStatsBatch = (range: string) => Network.post("/node/n
 export const getVersionInfo = () => Network.get("/version");
 // 节点接口(IP)列表（agent上报）
 export const getNodeInterfaces = (nodeId: number) => Network.post("/node/interfaces", { nodeId });
+// 节点系统信息（时间序列）
+export const getNodeSysinfo = (nodeId: number, range: string = '1h', limit?: number) => Network.post("/node/sysinfo", { nodeId, range, limit });
+
+// Share (public, read-only)
+export const shareNetworkList = (range: string = '1h') => Network.post("/share/network-list", { range });
+export const shareNetworkStats = (nodeId: number, range: string = '1h') => Network.post("/share/network-stats", { nodeId, range });
