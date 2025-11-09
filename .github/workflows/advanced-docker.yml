@@ -25,7 +25,7 @@ on:
         description: "是否将此镜像标记为 'latest'?"
         required: true
         type: boolean
-        default: true # 确保默认值是 true
+        default: true
       target_app:
         description: '要构建的特定应用程序 (例如 vite-frontend, springboot-backend, all)'
         required: true
@@ -69,14 +69,21 @@ jobs:
           fi
           echo "version_tag=$VERSION_TAG_OUT" >> "$GITHUB_OUTPUT"
 
-          ADD_LATEST_TAG_OUT=""
+          # --- 核心修复点 START ---
+          # 显式地将布尔输入转换为字符串 'true' 或 'false'
+          ADD_LATEST_TAG_OUT="false" # 默认设为 false
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ADD_LATEST_TAG_OUT="${{ github.event.inputs.add_latest_tag }}"
+            if [[ "${{ github.event.inputs.add_latest_tag }}" == "true" ]]; then
+              ADD_LATEST_TAG_OUT="true"
+            else
+              ADD_LATEST_TAG_OUT="false"
+            fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             ADD_LATEST_TAG_OUT="true"
           fi
           echo "add_latest_tag=$ADD_LATEST_TAG_OUT" >> "$GITHUB_OUTPUT"
-          
+          # --- 核心修复点 END ---
+
           TARGET_APP_OUT="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_app || '' }}"
           echo "target_app=$TARGET_APP_OUT" >> "$GITHUB_OUTPUT"
 
@@ -88,6 +95,7 @@ jobs:
 
 
   build-gost:
+    # ... (此作业无需改动，保持原样)
     if: github.event_name == 'push' && contains(github.event.head_commit.message, '[skip gost]') == false
     name: 构建并压缩 GOST 二进制文件
     runs-on: ubuntu-latest
@@ -95,7 +103,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v3
-
       - name: 检查 GOST 更改
         uses: dorny/paths-filter@v2
         id: gost-changes
@@ -103,13 +110,11 @@ jobs:
           filters: |
             gost:
               - 'go-gost/**'
-
       - name: 设置 Go 环境
         if: steps.gost-changes.outputs.gost == 'true'
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
-
       - name: 缓存 Go 模块
         if: steps.gost-changes.outputs.gost == 'true'
         uses: actions/cache@v3
@@ -120,7 +125,6 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-
       - name: 安装 UPX
         if: steps.gost-changes.outputs.gost == 'true'
         run: |
@@ -128,19 +132,16 @@ jobs:
           tar -xf upx-4.2.1-amd64_linux.tar.xz
           sudo mv upx-4.2.1-amd64_linux/upx /usr/local/bin/
           rm -rf upx-4.2.1-amd64_linux*
-
       - name: 构建 GOST 二进制文件
         if: steps.gost-changes.outputs.gost == 'true'
         working-directory: ./go-gost
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o gost
-
       - name: 使用 UPX 压缩
         if: steps.gost-changes.outputs.gost == 'true'
         working-directory: ./go-gost
         run: |
           upx --best --lzma gost
-
       - name: 创建或更新 Release
         if: steps.gost-changes.outputs.gost == 'true'
         env:
@@ -148,7 +149,6 @@ jobs:
         run: |
           git tag -f gost-latest ${{ github.sha }}
           git push origin gost-latest --force
-
           if gh release view gost-latest 2>/dev/null; then
             echo "Release exists, will update assets"
           else
@@ -156,13 +156,11 @@ jobs:
             gh release create gost-latest gost-latest \
               --title "GOST Binary Latest" \
               --notes "GOST binary compiled from commit ${{ github.sha }}
-          
           - Platform: Linux AMD64
           - Compressed with UPX
           - Build date: ${{ github.event.head_commit.timestamp }}" \
               --repo ${{ github.repository }}
           fi
-
           gh release upload gost-latest ./go-gost/gost --clobber
 
 
@@ -170,7 +168,6 @@ jobs:
 
   build-vite:
     needs: setup-docker-build-env
-    # 确保这里的 if 条件在评估时，setup-docker-build-env 已经完成
     if: |
       always() && (
         (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
@@ -216,10 +213,7 @@ jobs:
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             SHOULD_RUN_BUILD="true"
           elif [[ "$EVENT_NAME" == "push" ]]; then
-            # 检查是否有 vite 相关的更改 AND commit message 中不包含 '[skip vite]'
             if [[ "$VITE_CHANGES" == "true" ]]; then
-              # 使用 grep -q 来检查是否包含子串，如果包含则 grep 退出状态为 0，否则为非 0
-              # ! grep -q 表示“不包含”
               if ! echo "$COMMIT_MESSAGE" | grep -q '\[skip vite\]'; then
                 SHOULD_RUN_BUILD="true"
               fi
@@ -259,12 +253,10 @@ jobs:
           images: ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend
           tags: |
             type=raw,value=${{ needs.setup-docker-build-env.outputs.version_tag }},enable=${{ needs.setup-docker-build-env.outputs.version_tag != '' }}
-            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }} # 这里的比较是关键
+            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }}
           
       - name: 检查生成的标签 (用于 Build 阶段)
         if: steps.build-decision.outputs.should_run_build == 'true' && steps.meta.outputs.tags == ''
-        # 如果 steps.meta.outputs.tags 为空，说明没有任何标签生成。
-        # 此时 build-push-action 会失败，所以提前报错中断。
         run: |
           echo "::error::在 Build 阶段，没有为平台 ${{ matrix.platform }} 生成任何标签。请确保提供了版本标签或将 '标记为最新' 设置为 true。"
           exit 1
@@ -292,8 +284,7 @@ jobs:
             echo "::error::构建未产生摘要。这不应该发生，请检查 build 步骤是否成功。"
             exit 1
           fi
-          # 将摘要文件名存储为原始摘要字符串，以便后续合并
-          echo "$digest" > "/tmp/digests/${digest//[:]/_}" # 替换掉 : 以避免文件名问题
+          echo "$digest" > "/tmp/digests/${digest//[:]/_}"
 
       - name: 上传摘要
         if: steps.build-decision.outputs.should_run_build == 'true'
@@ -306,7 +297,6 @@ jobs:
 
   merge-vite:
     needs: build-vite
-    # 确保这里的 if 条件评估和 build-vite 保持一致
     if: |
       always() && (
         (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
@@ -344,39 +334,37 @@ jobs:
           images: ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend
           tags: |
             type=raw,value=${{ needs.setup-docker-build-env.outputs.version_tag }},enable=${{ needs.setup-docker-build-env.outputs.version_tag != '' }}
-            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }} # 这里的比较是关键
+            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }}
       
       - name: 创建清单列表并推送
         working-directory: /tmp/digests
         run: |
-          # 检查是否有下载的摘要文件，如果没有，说明 build-vite 没有成功生成镜像
           if [ ! -d "/tmp/digests" ] || [ -z "$(ls -A /tmp/digests)" ]; then
-            echo "::error::没有找到任何平台镜像的摘要文件。请检查前面的 build-vite 作业是否成功上传了 artifact。"
-            exit 1
+            echo "::warning::没有找到任何平台镜像的摘要文件。可能是因为没有相关文件更改（push 事件）或构建失败。跳过合并步骤。"
+            exit 0
           fi
 
-          # 读取摘要文件内容，每个文件内容是完整的带前缀的 sha256: 摘要
+          TAG_ARGS=$(echo "${{ steps.meta_merge.outputs.tags }}" | xargs -I {} printf -- "-t {} ")
+          
+          if [ -z "$TAG_ARGS" ]; then
+            echo "::error::在 Merge 阶段，没有为清单列表生成任何标签。请确保在手动触发时提供了版本标签或将 '标记为最新' 设置为 true。对于 Push 事件，'latest' 标签应始终生成。"
+            exit 1
+          fi
+          
           DIGESTS_LIST=""
           for f in $(ls -A /tmp/digests/*); do
             DIGEST=$(cat "$f")
             DIGESTS_LIST="$DIGESTS_LIST ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend@$DIGEST"
           done
 
-          TAG_ARGS=$(echo "${{ steps.meta_merge.outputs.tags }}" | xargs -I {} printf -- "-t {} ")
-          
-          if [ -z "$TAG_ARGS" ]; then
-            echo "::error::在 Merge 阶段，没有为清单列表生成任何标签。请确保在手动触发时提供了版本标签或将 '标记为最新' 设置为 true。对于 Push 事件，'latest' 标签应始终生成。"
-            exit 1 # 如果没有标签来创建/推送清单，则以错误退出
-          fi
-          
           docker buildx imagetools create ${TAG_ARGS} ${DIGESTS_LIST}
 
   cleanup-refresh:
     runs-on: ubuntu-latest
     needs:
-      - merge-vite # 确保 merge-vite 作业完成后才进行清理
-      - build-gost # 确保 build-gost 作业完成后才进行清理
-    if: always() # 无论之前的作业成功还是失败，都尝试运行清理
+      - merge-vite
+      - build-gost
+    if: always()
     steps:
       - name: 删除工作流运行
         uses: Mattraks/delete-workflow-runs@main
