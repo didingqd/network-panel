@@ -52,8 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.common_vars.outputs.commit_sha }}
-      version_tag: ${{ steps.common_vars.outputs.version_tag }}
-      add_latest_tag: ${{ steps.common_vars.outputs.add_latest_tag }}
+      docker_tags: ${{ steps.common_vars.outputs.docker_tags }} # ⭐ 主要输出改变
       target_app: ${{ steps.common_vars.outputs.target_app }}
       event_name: ${{ github.event_name }}
     steps:
@@ -63,25 +62,37 @@ jobs:
           COMMIT_SHA="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.sha }}"
           echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
 
-          VERSION_TAG_OUT=""
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version_tag }}" ]]; then
-            VERSION_TAG_OUT="${{ github.event.inputs.version_tag }}"
-          fi
-          echo "version_tag=$VERSION_TAG_OUT" >> "$GITHUB_OUTPUT"
-
           # --- 核心修复点 START ---
-          # 显式地将布尔输入转换为字符串 'true' 或 'false'
-          ADD_LATEST_TAG_OUT="false" # 默认设为 false
+          # 1. 获取原始输入
+          VERSION_TAG_IN=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION_TAG_IN="${{ github.event.inputs.version_tag }}"
+          fi
+
+          ADD_LATEST_TAG_IN="false"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             if [[ "${{ github.event.inputs.add_latest_tag }}" == "true" ]]; then
-              ADD_LATEST_TAG_OUT="true"
-            else
-              ADD_LATEST_TAG_OUT="false"
+              ADD_LATEST_TAG_IN="true"
             fi
           elif [[ "${{ github.event_name }}" == "push" ]]; then
-            ADD_LATEST_TAG_OUT="true"
+            ADD_LATEST_TAG_IN="true"
           fi
-          echo "add_latest_tag=$ADD_LATEST_TAG_OUT" >> "$GITHUB_OUTPUT"
+
+          # 2. 根据输入计算最终的 Docker 标签列表（逗号分隔）
+          DOCKER_TAGS=""
+          if [[ -n "$VERSION_TAG_IN" ]]; then
+            DOCKER_TAGS="$VERSION_TAG_IN"
+          fi
+          if [[ "$ADD_LATEST_TAG_IN" == "true" ]]; then
+            if [[ -n "$DOCKER_TAGS" ]]; then
+              DOCKER_TAGS="$DOCKER_TAGS,latest"
+            else
+              DOCKER_TAGS="latest"
+            fi
+          fi
+
+          # 3. 将计算好的标签列表作为单一输出
+          echo "docker_tags=$DOCKER_TAGS" >> "$GITHUB_OUTPUT"
           # --- 核心修复点 END ---
 
           TARGET_APP_OUT="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_app || '' }}"
@@ -89,8 +100,7 @@ jobs:
 
           echo "DEBUG: event_name=${{ github.event_name }}"
           echo "DEBUG: final commit_sha=$COMMIT_SHA"
-          echo "DEBUG: final version_tag=$VERSION_TAG_OUT"
-          echo "DEBUG: final add_latest_tag=$ADD_LATEST_TAG_OUT"
+          echo "DEBUG: final docker_tags=$DOCKER_TAGS"
           echo "DEBUG: final target_app=$TARGET_APP_OUT"
 
 
@@ -169,7 +179,7 @@ jobs:
   build-vite:
     needs: setup-docker-build-env
     if: |
-      always() && (
+      needs.setup-docker-build-env.outputs.docker_tags != '' && (
         (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
         (needs.setup-docker-build-env.outputs.event_name == 'push')
       )
@@ -251,15 +261,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend
+          # ⭐ 简化：直接使用预先计算好的标签
           tags: |
-            type=raw,value=${{ needs.setup-docker-build-env.outputs.version_tag }},enable=${{ needs.setup-docker-build-env.outputs.version_tag != '' }}
-            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }}
-          
-      - name: 检查生成的标签 (用于 Build 阶段)
-        if: steps.build-decision.outputs.should_run_build == 'true' && steps.meta.outputs.tags == ''
-        run: |
-          echo "::error::在 Build 阶段，没有为平台 ${{ matrix.platform }} 生成任何标签。请确保提供了版本标签或将 '标记为最新' 设置为 true。"
-          exit 1
+            type=raw,value=${{ needs.setup-docker-build-env.outputs.docker_tags }}
           
       - name: 构建并推送镜像
         id: build
@@ -270,7 +274,7 @@ jobs:
           file: ./vite-frontend/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags }} # 这里会接收到 "1.0.0,latest"
           outputs: type=image,name=ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend,name-canonical=true,push=true
           no-cache: true
           pull: true
@@ -296,9 +300,11 @@ jobs:
           retention-days: 1
 
   merge-vite:
-    needs: build-vite
+    needs:
+      - setup-docker-build-env
+      - build-vite
     if: |
-      always() && (
+      always() && needs.setup-docker-build-env.outputs.docker_tags != '' && (
         (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
         (needs.setup-docker-build-env.outputs.event_name == 'push')
       )
@@ -332,22 +338,23 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend
+          # ⭐ 简化：同样直接使用预先计算好的标签
           tags: |
-            type=raw,value=${{ needs.setup-docker-build-env.outputs.version_tag }},enable=${{ needs.setup-docker-build-env.outputs.version_tag != '' }}
-            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }}
+            type=raw,value=${{ needs.setup-docker-build-env.outputs.docker_tags }}
       
       - name: 创建清单列表并推送
         working-directory: /tmp/digests
         run: |
+          # ⭐ 改进的检查逻辑
           if [ ! -d "/tmp/digests" ] || [ -z "$(ls -A /tmp/digests)" ]; then
-            echo "::warning::没有找到任何平台镜像的摘要文件。可能是因为没有相关文件更改（push 事件）或构建失败。跳过合并步骤。"
-            exit 0
+            echo "::warning::没有找到任何平台镜像的摘要文件。可能是因为上游构建作业因无文件更改而跳过，或构建失败。此合并作业将正常跳过。"
+            exit 0 # 正常退出，不报错
           fi
 
+          # 这个检查现在应该永远不会失败了，因为 job-level if 已经保证了 docker_tags 不为空
           TAG_ARGS=$(echo "${{ steps.meta_merge.outputs.tags }}" | xargs -I {} printf -- "-t {} ")
-          
           if [ -z "$TAG_ARGS" ]; then
-            echo "::error::在 Merge 阶段，没有为清单列表生成任何标签。请确保在手动触发时提供了版本标签或将 '标记为最新' 设置为 true。对于 Push 事件，'latest' 标签应始终生成。"
+            echo "::error::严重错误：meta_merge 步骤未能生成标签，即使 docker_tags 输入不为空。输入是：'${{ needs.setup-docker-build-env.outputs.docker_tags }}'"
             exit 1
           fi
           
