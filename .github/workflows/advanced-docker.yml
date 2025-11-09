@@ -66,17 +66,13 @@ jobs:
           VERSION_TAG_OUT=""
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version_tag }}" ]]; then
             VERSION_TAG_OUT="${{ github.event.inputs.version_tag }}"
-          # push 事件时，如果 add_latest_tag 也是 true，通常只需要 latest 标签。所以这里留空不会阻止 latest 标签。
           fi
           echo "version_tag=$VERSION_TAG_OUT" >> "$GITHUB_OUTPUT"
 
-          # 确保 add_latest_tag 总是有一个明确的字符串值 'true' 或 'false'
           ADD_LATEST_TAG_OUT=""
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            # 对于 workflow_dispatch，直接使用输入值
             ADD_LATEST_TAG_OUT="${{ github.event.inputs.add_latest_tag }}"
           elif [[ "${{ github.event_name }}" == "push" ]]; then
-            # 对于 push，默认总是标记为 latest
             ADD_LATEST_TAG_OUT="true"
           fi
           echo "add_latest_tag=$ADD_LATEST_TAG_OUT" >> "$GITHUB_OUTPUT"
@@ -213,16 +209,24 @@ jobs:
         id: build-decision
         run: |
           SHOULD_RUN_BUILD="false"
-          if [[ "${{ needs.setup-docker-build-env.outputs.event_name }}" == "workflow_dispatch" ]]; then
+          EVENT_NAME="${{ needs.setup-docker-build-env.outputs.event_name }}"
+          VITE_CHANGES="${{ steps.vite-changes.outputs.vite }}"
+          COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             SHOULD_RUN_BUILD="true"
-          elif [[ "${{ needs.setup-docker-build-env.outputs.event_name }}" == "push" ]]; then
-            # 这里的 if 条件需要检查 commit message
-            if [[ "${{ steps.vite-changes.outputs.vite }}" == "true" && ! contains(github.event.head_commit.message, '[skip vite]') ]]; then
-              SHOULD_RUN_BUILD="true"
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            # 检查是否有 vite 相关的更改 AND commit message 中不包含 '[skip vite]'
+            if [[ "$VITE_CHANGES" == "true" ]]; then
+              # 使用 grep -q 来检查是否包含子串，如果包含则 grep 退出状态为 0，否则为非 0
+              # ! grep -q 表示“不包含”
+              if ! echo "$COMMIT_MESSAGE" | grep -q '\[skip vite\]'; then
+                SHOULD_RUN_BUILD="true"
+              fi
             fi
           fi
           echo "should_run_build=$SHOULD_RUN_BUILD" >> "$GITHUB_OUTPUT"
-          echo "DEBUG: build-vite job (platform ${{ matrix.platform }}): should_run_build=${{ steps.build-decision.outputs.should_run_build }}"
+          echo "DEBUG: build-vite job (platform ${{ matrix.platform }}): should_run_build=$SHOULD_RUN_BUILD"
 
       - name: 检出源代码
         if: steps.build-decision.outputs.should_run_build == 'true'
@@ -259,6 +263,8 @@ jobs:
           
       - name: 检查生成的标签 (用于 Build 阶段)
         if: steps.build-decision.outputs.should_run_build == 'true' && steps.meta.outputs.tags == ''
+        # 如果 steps.meta.outputs.tags 为空，说明没有任何标签生成。
+        # 此时 build-push-action 会失败，所以提前报错中断。
         run: |
           echo "::error::在 Build 阶段，没有为平台 ${{ matrix.platform }} 生成任何标签。请确保提供了版本标签或将 '标记为最新' 设置为 true。"
           exit 1
@@ -283,10 +289,11 @@ jobs:
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           if [ -z "$digest" ]; then
-            echo "::error::构建未产生摘要。这不应该发生。"
+            echo "::error::构建未产生摘要。这不应该发生，请检查 build 步骤是否成功。"
             exit 1
           fi
-          touch "/tmp/digests/${digest#sha256:}"
+          # 将摘要文件名存储为原始摘要字符串，以便后续合并
+          echo "$digest" > "/tmp/digests/${digest//[:]/_}" # 替换掉 : 以避免文件名问题
 
       - name: 上传摘要
         if: steps.build-decision.outputs.should_run_build == 'true'
@@ -342,6 +349,19 @@ jobs:
       - name: 创建清单列表并推送
         working-directory: /tmp/digests
         run: |
+          # 检查是否有下载的摘要文件，如果没有，说明 build-vite 没有成功生成镜像
+          if [ ! -d "/tmp/digests" ] || [ -z "$(ls -A /tmp/digests)" ]; then
+            echo "::error::没有找到任何平台镜像的摘要文件。请检查前面的 build-vite 作业是否成功上传了 artifact。"
+            exit 1
+          fi
+
+          # 读取摘要文件内容，每个文件内容是完整的带前缀的 sha256: 摘要
+          DIGESTS_LIST=""
+          for f in $(ls -A /tmp/digests/*); do
+            DIGEST=$(cat "$f")
+            DIGESTS_LIST="$DIGESTS_LIST ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend@$DIGEST"
+          done
+
           TAG_ARGS=$(echo "${{ steps.meta_merge.outputs.tags }}" | xargs -I {} printf -- "-t {} ")
           
           if [ -z "$TAG_ARGS" ]; then
@@ -349,21 +369,14 @@ jobs:
             exit 1 # 如果没有标签来创建/推送清单，则以错误退出
           fi
           
-          # 检查是否有下载的摘要文件，如果没有，说明 build-vite 没有成功生成镜像
-          if [ ! -d "/tmp/digests" ] || [ -z "$(ls -A /tmp/digests)" ]; then
-            echo "::error::没有找到任何平台镜像的摘要文件。请检查前面的 build-vite 作业是否成功。"
-            exit 1
-          fi
-
-          docker buildx imagetools create ${TAG_ARGS} \
-            $(printf 'ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend@sha256:%s ' *)
+          docker buildx imagetools create ${TAG_ARGS} ${DIGESTS_LIST}
 
   cleanup-refresh:
     runs-on: ubuntu-latest
     needs:
-      - merge-vite
-      - build-gost
-    if: always()
+      - merge-vite # 确保 merge-vite 作业完成后才进行清理
+      - build-gost # 确保 build-gost 作业完成后才进行清理
+    if: always() # 无论之前的作业成功还是失败，都尝试运行清理
     steps:
       - name: 删除工作流运行
         uses: Mattraks/delete-workflow-runs@main
