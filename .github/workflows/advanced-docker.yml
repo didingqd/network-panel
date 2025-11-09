@@ -5,13 +5,11 @@ on:
     branches:
       - main
     paths:
-      # 触发自动构建的应用程序路径
       - 'vue-frontend/**'
       - 'vite-frontend/**'
       - 'springboot-backend/**'
-      - 'go-gost/**' # GOST 不是 Docker 构建，但其更改仍会触发
-      - '.github/workflows/docker-build.yml' # 此工作流的更改
-      # 'android-app/**' 被排除，因为它通常不是 Docker 构建。
+      - 'go-gost/**'
+      - '.github/workflows/docker-build.yml'
 
   workflow_dispatch:
     inputs:
@@ -20,14 +18,14 @@ on:
         required: false
         type: string
       version_tag:
-        description: '版本标签 (可选, 如 v1.0.0)。如果为空且不是 "latest"，则除了 "latest" (如果启用) 之外不会使用其他版本标签。'
+        description: '版本标签 (可选, 如 v1.0.0)。如果为空且未标记为 "latest"，则不会使用其他版本标签。'
         required: false
         type: string
       add_latest_tag:
         description: "是否将此镜像标记为 'latest'?"
         required: true
         type: boolean
-        default: true
+        default: true # 确保默认值是 true
       target_app:
         description: '要构建的特定应用程序 (例如 vite-frontend, springboot-backend, all)'
         required: true
@@ -38,20 +36,17 @@ on:
           - 'vite-frontend'
           - 'springboot-backend'
           - 'vue-frontend'
-          # 如有需要，在此处添加其他可构建 Docker 镜像的应用程序
 
-# 取消同一分支/工作流正在进行的运行，以避免冗余构建
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write # 用于创建 GOST release
-  packages: write # 用于推送到 GHCR
-  actions: write # 用于工作流清理
+  contents: write
+  packages: write
+  actions: write
 
 jobs:
-  # 此作业根据触发事件（push 或 workflow_dispatch）及其输入，确定通用参数（commit、标签）。
   setup-docker-build-env:
     name: 设置 Docker 构建环境
     runs-on: ubuntu-latest
@@ -65,43 +60,43 @@ jobs:
       - name: 确定通用构建参数
         id: common_vars
         run: |
-          # 1. 确定 Commit SHA
           COMMIT_SHA="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.sha }}"
           echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
 
-          # 2. 确定版本标签
           VERSION_TAG_OUT=""
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version_tag }}" ]]; then
             VERSION_TAG_OUT="${{ github.event.inputs.version_tag }}"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            # 对于 push，我们通常只依赖 'latest'，除非需要特定的标签策略。
-            # 此处留空表示 metadata-action 将仅在 add_latest_tag 为 true 时使用 'latest'。
-            VERSION_TAG_OUT=""
+          # push 事件时，如果 add_latest_tag 也是 true，通常只需要 latest 标签。所以这里留空不会阻止 latest 标签。
           fi
           echo "version_tag=$VERSION_TAG_OUT" >> "$GITHUB_OUTPUT"
 
-          # 3. 确定 'add_latest_tag' 标志
+          # 确保 add_latest_tag 总是有一个明确的字符串值 'true' 或 'false'
           ADD_LATEST_TAG_OUT=""
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # 对于 workflow_dispatch，直接使用输入值
             ADD_LATEST_TAG_OUT="${{ github.event.inputs.add_latest_tag }}"
           elif [[ "${{ github.event_name }}" == "push" ]]; then
-            ADD_LATEST_TAG_OUT="true" # 对于 main 分支的 push 操作，始终添加 'latest' 标签
+            # 对于 push，默认总是标记为 latest
+            ADD_LATEST_TAG_OUT="true"
           fi
           echo "add_latest_tag=$ADD_LATEST_TAG_OUT" >> "$GITHUB_OUTPUT"
-
-          # 4. 确定目标应用程序 (用于 workflow_dispatch)
+          
           TARGET_APP_OUT="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_app || '' }}"
           echo "target_app=$TARGET_APP_OUT" >> "$GITHUB_OUTPUT"
 
+          echo "DEBUG: event_name=${{ github.event_name }}"
+          echo "DEBUG: final commit_sha=$COMMIT_SHA"
+          echo "DEBUG: final version_tag=$VERSION_TAG_OUT"
+          echo "DEBUG: final add_latest_tag=$ADD_LATEST_TAG_OUT"
+          echo "DEBUG: final target_app=$TARGET_APP_OUT"
+
+
   build-gost:
-    # 此作业构建 Go 二进制文件并创建 GitHub Release 资产。
-    # 它不构建 Docker 镜像，因此其逻辑基本保持独立。
-    # 它仅在 'push' 事件触发时运行，并且仅当 GOST 发生更改或 commit 消息未包含 'skip gost' 时。
     if: github.event_name == 'push' && contains(github.event.head_commit.message, '[skip gost]') == false
     name: 构建并压缩 GOST 二进制文件
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 创建/更新 Release 资产所需
+      contents: write
     steps:
       - uses: actions/checkout@v3
 
@@ -117,7 +112,7 @@ jobs:
         if: steps.gost-changes.outputs.gost == 'true'
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21' # 根据需要调整版本
+          go-version: '1.21'
 
       - name: 缓存 Go 模块
         if: steps.gost-changes.outputs.gost == 'true'
@@ -155,11 +150,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 确保标签指向当前 commit
           git tag -f gost-latest ${{ github.sha }}
           git push origin gost-latest --force
 
-          # 检查 Release 是否存在，不存在则创建
           if gh release view gost-latest 2>/dev/null; then
             echo "Release exists, will update assets"
           else
@@ -174,43 +167,38 @@ jobs:
               --repo ${{ github.repository }}
           fi
 
-          # 上传资产并覆盖同名文件（如果存在）
           gh release upload gost-latest ./go-gost/gost --clobber
 
 
-  # --- Docker 构建作业 ---
+  # --- Docker Build Jobs ---
 
-  # Vite 前端构建作业 (示例，其他如 vue-frontend, springboot-backend 类似)
   build-vite:
     needs: setup-docker-build-env
-    # 作业的整体条件执行逻辑：
-    # 满足以下条件之一时运行：
-    # 1. 由 workflow_dispatch 触发 AND target_app 为 'all' 或 'vite-frontend'
-    # 或者
-    # 2. 由 push 触发 AND (vite-frontend 或工作流文件有更改) AND commit 消息不包含 '[skip vite]'
+    # 确保这里的 if 条件在评估时，setup-docker-build-env 已经完成
     if: |
-      (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
-      (needs.setup-docker-build-env.outputs.event_name == 'push')
+      always() && (
+        (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
+        (needs.setup-docker-build-env.outputs.event_name == 'push')
+      )
     name: 构建 Vite 前端 - ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
       packages: write
     strategy:
-      fail-fast: false # 允许即使其中一个矩阵作业失败，其他作业也能完成
+      fail-fast: false
       matrix:
         include:
           - platform: linux/amd64
             os: ubuntu-latest
           - platform: linux/arm64
-            os: ubuntu-latest # 两者都使用 ubuntu-latest，如果需要特定的 ARM 运行器，请调整
+            os: ubuntu-latest
 
     steps:
       - name: 准备平台名称 (环境变量)
         run: |
           echo "PLATFORM_NAME=${{ matrix.platform }}" | sed 's|/|-|g' >> $GITHUB_ENV
 
-      # 检查路径的步骤。仅在 'push' 事件上运行，其输出在下方使用。
       - name: 检查 Vite 更改 (push 事件)
         if: needs.setup-docker-build-env.outputs.event_name == 'push'
         uses: dorny/paths-filter@v2
@@ -219,24 +207,23 @@ jobs:
           filters: |
             vite:
               - 'vite-frontend/**'
-              - '.github/workflows/docker-build.yml' # 如果工作流文件更改，则重新评估构建
+              - '.github/workflows/docker-build.yml'
 
-      # 确定实际构建步骤是否应该运行。
-      # 这处理 'push' 事件的路径过滤和跳过 commit 消息。
       - name: 设置构建决策标志
         id: build-decision
         run: |
           SHOULD_RUN_BUILD="false"
           if [[ "${{ needs.setup-docker-build-env.outputs.event_name }}" == "workflow_dispatch" ]]; then
-            SHOULD_RUN_BUILD="true" # 如果是手动调度，则始终运行
+            SHOULD_RUN_BUILD="true"
           elif [[ "${{ needs.setup-docker-build-env.outputs.event_name }}" == "push" ]]; then
-            if [[ "${{ steps.vite-changes.outputs.vite }}" == "true" && -z $(echo "${{ github.event.head_commit.message }}" | grep -E '\[skip vite\]') ]]; then
+            # 这里的 if 条件需要检查 commit message
+            if [[ "${{ steps.vite-changes.outputs.vite }}" == "true" && ! contains(github.event.head_commit.message, '[skip vite]') ]]; then
               SHOULD_RUN_BUILD="true"
             fi
           fi
           echo "should_run_build=$SHOULD_RUN_BUILD" >> "$GITHUB_OUTPUT"
-        
-      # 所有后续的核心 Docker 构建步骤都将使用此 'should_run_build' 输出
+          echo "DEBUG: build-vite job (platform ${{ matrix.platform }}): should_run_build=${{ steps.build-decision.outputs.should_run_build }}"
+
       - name: 检出源代码
         if: steps.build-decision.outputs.should_run_build == 'true'
         uses: actions/checkout@v4
@@ -253,7 +240,6 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # 使用 GitHub Actions 为 GHCR 自动提供的 GITHUB_TOKEN
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 设置小写仓库所有者名称
@@ -266,31 +252,29 @@ jobs:
         if: steps.build-decision.outputs.should_run_build == 'true'
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend # 替换为实际的镜像名称
+          images: ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend
           tags: |
             type=raw,value=${{ needs.setup-docker-build-env.outputs.version_tag }},enable=${{ needs.setup-docker-build-env.outputs.version_tag != '' }}
-            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }}
-            # 添加短 SHA 标签的示例 (可选，如果需要则取消注释)：
-            # type=sha,format=short,enable=true
-
-      - name: 检查生成的标签
+            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }} # 这里的比较是关键
+          
+      - name: 检查生成的标签 (用于 Build 阶段)
         if: steps.build-decision.outputs.should_run_build == 'true' && steps.meta.outputs.tags == ''
         run: |
-          echo "::error::没有生成任何标签。您必须提供版本标签和/或将 'add_latest_tag' 设置为 true。"
+          echo "::error::在 Build 阶段，没有为平台 ${{ matrix.platform }} 生成任何标签。请确保提供了版本标签或将 '标记为最新' 设置为 true。"
           exit 1
           
-      - name: 按摘要构建并推送
+      - name: 构建并推送镜像
         id: build
         if: steps.build-decision.outputs.should_run_build == 'true'
         uses: docker/build-push-action@v5
         with:
-          context: ./vite-frontend # Dockerfile 上下文路径
-          file: ./vite-frontend/Dockerfile # vite-frontend 的 Dockerfile 路径
+          context: ./vite-frontend
+          file: ./vite-frontend/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           outputs: type=image,name=ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend,name-canonical=true,push=true
-          no-cache: true # 设置为 true 可防止 Docker 缓存问题（可能减慢构建速度）
+          no-cache: true
           pull: true
 
       - name: 导出摘要
@@ -298,6 +282,10 @@ jobs:
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
+          if [ -z "$digest" ]; then
+            echo "::error::构建未产生摘要。这不应该发生。"
+            exit 1
+          fi
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: 上传摘要
@@ -307,16 +295,16 @@ jobs:
           name: vite-frontend-digests-${{ env.PLATFORM_NAME }}
           path: /tmp/digests/*
           if-no-files-found: error
-          retention-days: 1 # 工件保留时间
+          retention-days: 1
 
-  # Vite 前端合并作业 (收集多架构镜像并创建清单列表)
   merge-vite:
-    needs: build-vite # 依赖于所有平台构建成功完成
-    name: 合并 Vite 前端清单
-    # 条件执行：逻辑与 build-vite 相同
+    needs: build-vite
+    # 确保这里的 if 条件评估和 build-vite 保持一致
     if: |
-      (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
-      (needs.setup-docker-build-env.outputs.event_name == 'push')
+      always() && (
+        (needs.setup-docker-build-env.outputs.event_name == 'workflow_dispatch' && (needs.setup-docker-build-env.outputs.target_app == 'all' || needs.setup-docker-build-env.outputs.target_app == 'vite-frontend')) ||
+        (needs.setup-docker-build-env.outputs.event_name == 'push')
+      )
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -325,8 +313,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: vite-frontend-digests-* # 匹配来自 build-vite 矩阵作业的工件
-          merge-multiple: true # 将所有工件合并到一个目录中
+          pattern: vite-frontend-digests-*
+          merge-multiple: true
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -349,36 +337,38 @@ jobs:
           images: ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend
           tags: |
             type=raw,value=${{ needs.setup-docker-build-env.outputs.version_tag }},enable=${{ needs.setup-docker-build-env.outputs.version_tag != '' }}
-            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }}
-            # 添加短 SHA 标签的示例 (可选，如果需要则取消注释)：
-            # type=sha,format=short,enable=true
+            type=raw,value=latest,enable=${{ needs.setup-docker-build-env.outputs.add_latest_tag == 'true' }} # 这里的比较是关键
       
       - name: 创建清单列表并推送
-        working-directory: /tmp/digests # 在此目录中查找摘要文件
+        working-directory: /tmp/digests
         run: |
           TAG_ARGS=$(echo "${{ steps.meta_merge.outputs.tags }}" | xargs -I {} printf -- "-t {} ")
+          
           if [ -z "$TAG_ARGS" ]; then
-            echo "::warning::没有为清单列表生成任何标签。这可能意味着只推送了平台特定的镜像，或者标签逻辑需要调整。"
-            # 不要以 1 退出，因为基础镜像可能仍然有用，或者如果没有版本/latest 标签，则可能是有意为之。
+            echo "::error::在 Merge 阶段，没有为清单列表生成任何标签。请确保在手动触发时提供了版本标签或将 '标记为最新' 设置为 true。对于 Push 事件，'latest' 标签应始终生成。"
+            exit 1 # 如果没有标签来创建/推送清单，则以错误退出
           fi
           
-          # 此命令将特定于平台的镜像合并到一个清单列表中。
-          # '*' 匹配所有摘要文件，每个文件代表一个特定于平台的镜像 ID。
+          # 检查是否有下载的摘要文件，如果没有，说明 build-vite 没有成功生成镜像
+          if [ ! -d "/tmp/digests" ] || [ -z "$(ls -A /tmp/digests)" ]; then
+            echo "::error::没有找到任何平台镜像的摘要文件。请检查前面的 build-vite 作业是否成功。"
+            exit 1
+          fi
+
           docker buildx imagetools create ${TAG_ARGS} \
             $(printf 'ghcr.io/${{ steps.lowercase.outputs.owner }}/vite-frontend@sha256:%s ' *)
 
-  # 清理工作流运行历史记录 (可选，根据您的示例)
   cleanup-refresh:
     runs-on: ubuntu-latest
     needs:
-      - merge-vite # 等待 Docker 推送完成
-      - build-gost # 同时等待 GOST Release 完成
-    if: always() # 即使之前的作业失败也运行清理
+      - merge-vite
+      - build-gost
+    if: always()
     steps:
       - name: 删除工作流运行
         uses: Mattraks/delete-workflow-runs@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          retain_days: 0 # 保留 0 天表示立即删除所有
-          keep_minimum_runs: 2 # 至少保留 2 次运行，通常是最近成功的一次和当前的一次。
+          retain_days: 0
+          keep_minimum_runs: 2
